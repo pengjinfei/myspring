@@ -60,6 +60,158 @@ public class ConcurrentReferenceHashMap<K, V> extends AbstractMap<K, V> implemen
 	 * Late binding entry set.
 	 */
 	private Set<Map.Entry<K, V>> entrySet;
+	
+	public ConcurrentReferenceHashMap() {
+		this(DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR, DEFAULT_CONCURRENCY_LEVEL, DEFAULT_REFERENCE_TYPE);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 */
+	public ConcurrentReferenceHashMap(int initialCapacity) {
+		this(initialCapacity, DEFAULT_LOAD_FACTOR, DEFAULT_CONCURRENCY_LEVEL, DEFAULT_REFERENCE_TYPE);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 * @param loadFactor the load factor. When the average number of references per table
+	 * exceeds this value resize will be attempted
+	 */
+	public ConcurrentReferenceHashMap(int initialCapacity, float loadFactor) {
+		this(initialCapacity, loadFactor, DEFAULT_CONCURRENCY_LEVEL, DEFAULT_REFERENCE_TYPE);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 * @param concurrencyLevel the expected number of threads that will concurrently
+	 * write to the map
+	 */
+	public ConcurrentReferenceHashMap(int initialCapacity, int concurrencyLevel) {
+		this(initialCapacity, DEFAULT_LOAD_FACTOR, concurrencyLevel, DEFAULT_REFERENCE_TYPE);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 * @param referenceType the reference type used for entries (soft or weak)
+	 */
+	public ConcurrentReferenceHashMap(int initialCapacity, ReferenceType referenceType) {
+		this(initialCapacity, DEFAULT_LOAD_FACTOR, DEFAULT_CONCURRENCY_LEVEL, referenceType);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 * @param loadFactor the load factor. When the average number of references per
+	 * table exceeds this value, resize will be attempted.
+	 * @param concurrencyLevel the expected number of threads that will concurrently
+	 * write to the map
+	 */
+	public ConcurrentReferenceHashMap(int initialCapacity, float loadFactor, int concurrencyLevel) {
+		this(initialCapacity, loadFactor, concurrencyLevel, DEFAULT_REFERENCE_TYPE);
+	}
+
+	/**
+	 * Create a new {@code ConcurrentReferenceHashMap} instance.
+	 * @param initialCapacity the initial capacity of the map
+	 * @param loadFactor the load factor. When the average number of references per
+	 * table exceeds this value, resize will be attempted.
+	 * @param concurrencyLevel the expected number of threads that will concurrently
+	 * write to the map
+	 * @param referenceType the reference type used for entries (soft or weak)
+	 */
+	@SuppressWarnings("unchecked")
+	public ConcurrentReferenceHashMap(int initialCapacity, float loadFactor, int concurrencyLevel,
+			ReferenceType referenceType) {
+
+		Assert.isTrue(initialCapacity >= 0, "Initial capacity must not be negative");
+		Assert.isTrue(loadFactor > 0f, "Load factor must be positive");
+		Assert.isTrue(concurrencyLevel > 0, "Concurrency level must be positive");
+		Assert.notNull(referenceType, "Reference type must not be null");
+		this.loadFactor = loadFactor;
+		this.shift = calculateShift(concurrencyLevel, MAXIMUM_CONCURRENCY_LEVEL);
+		int size = 1 << this.shift;
+		this.referenceType = referenceType;
+		int roundedUpSegmentCapacity = (int) ((initialCapacity + size - 1L) / size);
+		this.segments = (Segment[]) Array.newInstance(Segment.class, size);
+		for (int i = 0; i < this.segments.length; i++) {
+			this.segments[i] = new Segment(roundedUpSegmentCapacity);
+		}
+	}
+	
+	protected final float getLoadFactor() {
+		return this.loadFactor;
+	}
+
+	protected final int getSegmentsSize() {
+		return this.segments.length;
+	}
+
+	protected final Segment getSegment(int index) {
+		return this.segments[index];
+	}
+	
+	protected static int calculateShift(int minimumValue, int maximumValue) {
+		int shift = 0;
+		int value = 1;
+		while (value < minimumValue && value < maximumValue) {
+			value <<= 1;
+			shift++;
+		}
+		return shift;
+	}
+
+	protected static final class Entry<K, V> implements Map.Entry<K, V> {
+
+		private final K key;
+
+		private volatile V value;
+
+		public Entry(K key, V value) {
+			this.key = key;
+			this.value = value;
+		}
+
+		public K getKey() {
+			return this.key;
+		}
+
+		public V getValue() {
+			return this.value;
+		}
+
+		public V setValue(V value) {
+			V previous = this.value;
+			this.value = value;
+			return previous;
+		}
+
+		public String toString() {
+			return (this.key + "=" + this.value);
+		}
+
+		@Override
+		@SuppressWarnings("rawtypes")
+		public final boolean equals(Object other) {
+			if (this == other) {
+				return true;
+			}
+			if (!(other instanceof Map.Entry)) {
+				return false;
+			}
+			Map.Entry otherEntry = (Map.Entry) other;
+			return (ObjectUtils.nullSafeEquals(getKey(), otherEntry.getKey()) &&
+					ObjectUtils.nullSafeEquals(getValue(), otherEntry.getValue()));
+		}
+
+		@Override
+		public final int hashCode() {
+			return (ObjectUtils.nullSafeHashCode(this.key) ^ ObjectUtils.nullSafeHashCode(this.value));
+		}
+	}
 
 	protected static interface Reference<K, V> {
 
@@ -69,7 +221,7 @@ public class ConcurrentReferenceHashMap<K, V> extends AbstractMap<K, V> implemen
 		 * longer available.
 		 * 
 		 * @return the entry or {@code null}
-		 */
+		 */   
 		Entry<K, V> get();
 
 		/**
@@ -180,6 +332,10 @@ public class ConcurrentReferenceHashMap<K, V> extends AbstractMap<K, V> implemen
 		public Reference<K, V> pollForPurge() {
 			return (Reference<K, V>) this.queue.poll();
 		}
+	}
+	
+	protected ReferenceManager createReferenceManager() {
+		return new ReferenceManager();
 	}
 	
 	private class EntryIterator implements Iterator<Map.Entry<K, V>> {
@@ -572,30 +728,165 @@ public class ConcurrentReferenceHashMap<K, V> extends AbstractMap<K, V> implemen
 		WHEN_NECESSARY, NEVER
 	}
 
+	protected int getHash(Object o) {
+		int hash = o == null ? 0 : o.hashCode();
+		hash += (hash << 15) ^ 0xffffcd7d;
+		hash ^= (hash >>> 10);
+		hash += (hash << 3);
+		hash ^= (hash >>> 6);
+		hash += (hash << 2) + (hash << 14);
+		hash ^= (hash >>> 16);
+		return hash;
+	}
+
+	@Override
+	public V get(Object key) {
+		Reference<K, V> reference = getReference(key, Restructure.WHEN_NECESSARY);
+		Entry<K, V> entry = (reference != null ? reference.get() : null);
+		return (entry != null ? entry.getValue() : null);
+	}
+
+	@Override
+	public boolean containsKey(Object key) {
+		Reference<K, V> reference = getReference(key, Restructure.WHEN_NECESSARY);
+		Entry<K, V> entry = (reference != null ? reference.get() : null);
+		return (entry != null && ObjectUtils.nullSafeEquals(entry.getKey(), key));
+	}
+
+	/**
+	 * Return a {@link Reference} to the {@link Entry} for the specified {@code key},
+	 * or {@code null} if not found.
+	 * @param key the key (can be {@code null})
+	 * @param restructure types of restructure allowed during this call
+	 * @return the reference, or {@code null} if not found
+	 */
+	protected final Reference<K, V> getReference(Object key, Restructure restructure) {
+		int hash = getHash(key);
+		return getSegmentForHash(hash).getReference(key, hash, restructure);
+	}
+
+	public V put(K key, V value) {
+		return put(key, value, true);
+	}
+
 	public V putIfAbsent(K key, V value) {
-		// TODO Auto-generated method stub
-		return null;
+		return put(key, value, false);
 	}
 
-	public boolean remove(Object key, Object value) {
-		// TODO Auto-generated method stub
-		return false;
+	private V put(final K key, final V value, final boolean overwriteExisting) {
+		return doTask(key, new Task<V>(TaskOption.RESTRUCTURE_BEFORE, TaskOption.RESIZE) {
+			@Override
+			protected V execute(Reference<K, V> reference, Entry<K, V> entry, Entries entries) {
+				if (entry != null) {
+					V previousValue = entry.getValue();
+					if (overwriteExisting) {
+						entry.setValue(value);
+					}
+					return previousValue;
+				}
+				entries.add(value);
+				return null;
+			}
+		});
 	}
 
-	public boolean replace(K key, V oldValue, V newValue) {
-		// TODO Auto-generated method stub
-		return false;
+	public V remove(Object key) {
+		return doTask(key, new Task<V>(TaskOption.RESTRUCTURE_AFTER, TaskOption.SKIP_IF_EMPTY) {
+			@Override
+			protected V execute(Reference<K, V> reference, Entry<K, V> entry) {
+				if (entry != null) {
+					reference.release();
+					return entry.value;
+				}
+				return null;
+			}
+		});
 	}
 
-	public V replace(K key, V value) {
-		// TODO Auto-generated method stub
-		return null;
+	public boolean remove(Object key, final Object value) {
+		return doTask(key, new Task<Boolean>(TaskOption.RESTRUCTURE_AFTER, TaskOption.SKIP_IF_EMPTY) {
+			@Override
+			protected Boolean execute(Reference<K, V> reference, Entry<K, V> entry) {
+				if (entry != null && ObjectUtils.nullSafeEquals(entry.getValue(), value)) {
+					reference.release();
+					return true;
+				}
+				return false;
+			}
+		});
+	}
+
+	public boolean replace(K key, final V oldValue, final V newValue) {
+		return doTask(key, new Task<Boolean>(TaskOption.RESTRUCTURE_BEFORE, TaskOption.SKIP_IF_EMPTY) {
+			@Override
+			protected Boolean execute(Reference<K, V> reference, Entry<K, V> entry) {
+				if (entry != null && ObjectUtils.nullSafeEquals(entry.getValue(), oldValue)) {
+					entry.setValue(newValue);
+					return true;
+				}
+				return false;
+			}
+		});
+	}
+
+	public V replace(K key, final V value) {
+		return doTask(key, new Task<V>(TaskOption.RESTRUCTURE_BEFORE, TaskOption.SKIP_IF_EMPTY) {
+			@Override
+			protected V execute(Reference<K, V> reference, Entry<K, V> entry) {
+				if (entry != null) {
+					V previousValue = entry.getValue();
+					entry.setValue(value);
+					return previousValue;
+				}
+				return null;
+			}
+		});
+	}
+
+	@Override
+	public void clear() {
+		for (Segment segment : this.segments) {
+			segment.clear();
+		}
+	}
+
+	/**
+	 * Remove any entries that have been garbage collected and are no longer referenced.
+	 * Under normal circumstances garbage collected entries are automatically purged as
+	 * items are added or removed from the Map. This method can be used to force a purge,
+	 * and is useful when the Map is read frequently but updated less often.
+	 */
+	public void purgeUnreferencedEntries() {
+		for (Segment segment : this.segments) {
+			segment.restructureIfNecessary(false);
+		}
+	}
+
+
+	@Override
+	public int size() {
+		int size = 0;
+		for (Segment segment : this.segments) {
+			size += segment.getCount();
+		}
+		return size;
 	}
 
 	@Override
 	public Set<java.util.Map.Entry<K, V>> entrySet() {
-		// TODO Auto-generated method stub
-		return null;
+		if (this.entrySet == null) {
+			this.entrySet = new EntrySet();
+		}
+		return this.entrySet;
+	}
+
+	private <T> T doTask(Object key, Task<T> task) {
+		int hash = getHash(key);
+		return getSegmentForHash(hash).doTask(hash, key, task);
+	}
+
+	private Segment getSegmentForHash(int hash) {
+		return this.segments[(hash >>> (32 - this.shift)) & (this.segments.length - 1)];
 	}
 
 }
